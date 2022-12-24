@@ -1,13 +1,14 @@
 from fastapi import FastAPI, HTTPException
 import os
 import json
-from datetime import datetime, timedelta
 import requests
 from bs4 import BeautifulSoup as bs 
 import time
 from web3 import Web3, EthereumTesterProvider
 from eth_account.messages import encode_defunct
 from dotenv import load_dotenv
+import pymongo
+from pymongo.server_api import ServerApi
 
 load_dotenv()
 data = json.load(open('data.json'))
@@ -49,14 +50,21 @@ def moonbeans_price(contract, link):
 def raregems_price(link):
 	resp = requests.get(link)
 	soup = bs(resp.content, features="html.parser")
-	parent_element = soup.find("div", text="Min Price").parent
+	parent_element = soup.find("div", string="Min Price").parent
 	floor = int(parent_element.find("img").next_sibling.strip()) * 10**18
 	return floor
 
+def database_price(contract):
+	PASSWORD = os.getenv('MONGODBPASSWORD')
+	client = pymongo.MongoClient(f"mongodb+srv://ninja:{PASSWORD}@oracle-atlas.2mwhyc5.mongodb.net/?retryWrites=true&w=majority", server_api=ServerApi('1'))
+	table = client["nft_collections_moonriver"][contract]
+	results = table.find({"timestamp": {"$gte": int(time.time()) - 7*24*3600 }}) #fetching prices in the last week
 
-# Todo: implement this using selenium
-def tofunft_price(link):
-	pass
+	prices = []
+	for result in results:
+		prices.append(int(result["price"]))
+	
+	return min(prices)
 
 
 def return_floor(chainId, contract):
@@ -92,14 +100,14 @@ def return_floor(chainId, contract):
 				prices.append(price)
 			except:
 				pass
-		elif marketplace["name"] == "Tofu NFT":
-			try:
-				pass
-				# price = tofunft_price(marketplace["link"])
-				# prices.append(price)
-			except:
-				pass
 	
+	try:
+		price = database_price(collection["contract"])
+		assert(type(price) == int)
+		prices.append(price)
+	except:
+		pass
+
 	final_floor = 0
 
 	if len(prices) == 0:
@@ -162,10 +170,3 @@ def returnValue(chainId: int, contract: str):
 		}
 	}
 	return obj
-
-
-
-
-
-
-# {"price":"53124045701228170","deadline":1670156873,"normalizedNftContract":"0xca7ca7bcc765f77339be2d648ba53ce9c8a262bd","signature":{"v":27,"r":"0x1173c588eaa06f48f715d6101cbb23637e998b88c30e967aa636625d813b1841","s":"0x1d485c07513fb64084012bd00b66b782047d6ea7dbeb23ae3b860cdea5fa404d"}}
