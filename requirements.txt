@@ -16,3 +16,5 @@ eth-utils==1.10.0
 py-geth==3.10.0
 pyethash==0.1.27
 python-dotenv==0.19.0
+hypercorn==0.14.3
+hyperframe==6.0.1
