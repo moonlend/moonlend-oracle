@@ -11,16 +11,15 @@ import pymongo
 from pymongo.server_api import ServerApi
 
 load_dotenv()
-data = json.load(open('data.json'))
-
+data = requests.get("https://raw.githubusercontent.com/moonlend/moonlend-nft-list/master/nft-list.json").json()
 
 # Add successful sales data and the floor one week ago data
-def moonsama_marketplace_price(contract, link):
+def moonsama_marketplace_price(address, link):
 
 	query = f"""{{ 
 		latestOrders: 
 			orders( where: {{
-				active: true, buyAsset: \"0x0000000000000000000000000000000000000000-0\", sellAsset_starts_with: \"{contract.lower()}\"
+				active: true, buyAsset: \"0x0000000000000000000000000000000000000000-0\", sellAsset_starts_with: \"{address}\"
 				}} 
 			orderBy: pricePerUnit orderDirection: asc skip: 0 first: 1 ) {{ 
 				id orderType createdAt active pricePerUnit 
@@ -32,9 +31,9 @@ def moonsama_marketplace_price(contract, link):
 	return floor
 
 
-def moonbeans_price(contract, link):
+def moonbeans_price(address, link):
 	query = f"""{{ 
-		allAsks(condition: {{collectionId: \"{contract}\"}}, 
+		allAsks(condition: {{collectionId: \"{address}\"}}, 
 		orderBy: VALUE_ASC, first: 1) {{ 
 			nodes {{ 
 				id timestamp value __typename }} 
@@ -54,10 +53,10 @@ def raregems_price(link):
 	floor = int(parent_element.find("img").next_sibling.strip()) * 10**18
 	return floor
 
-def database_price(contract):
+def database_price(address):
 	PASSWORD = os.getenv('MONGODBPASSWORD')
 	client = pymongo.MongoClient(f"mongodb+srv://ninja:{PASSWORD}@oracle-atlas.2mwhyc5.mongodb.net/?retryWrites=true&w=majority", server_api=ServerApi('1'))
-	table = client["nft_collections_moonriver"][contract]
+	table = client["nft_collections_moonriver"][address]
 	results = table.find({"timestamp": {"$gte": int(time.time()) - 7*24*3600 }}) #fetching prices in the last week
 
 	prices = []
@@ -67,13 +66,15 @@ def database_price(contract):
 	return min(prices)
 
 
-def return_floor(chainId, contract):
-	print(chainId, contract)
+def return_floor(chainId, address):
+	print(chainId, address)
 
 	collection = {}
-	for nft in data["collections_supported"]:
-		if nft["contract"] == contract and nft["chainId"] == chainId:
+	for nft in data["tokens"]:
+		if nft["address"].lower() == address and nft["chainId"] == chainId:
 			collection = nft
+		collection["address"] = collection["address"].lower()
+
 
 	if not bool(collection):
 		return "500Error"
@@ -83,14 +84,14 @@ def return_floor(chainId, contract):
 	for marketplace in collection["marketplaces"]:
 		if marketplace["name"] == "Moonsama Marketplace":
 			try:
-				price = moonsama_marketplace_price(collection["contract"], marketplace["link"])
+				price = moonsama_marketplace_price(collection["address"], marketplace["link"])
 				prices.append(price)
 			except:
 				pass
 
 		elif marketplace["name"] == "Moonbeans":
 			try:
-				price = moonbeans_price(collection["contract"], marketplace["link"])
+				price = moonbeans_price(collection["address"], marketplace["link"])
 				prices.append(price)
 			except:
 				pass
@@ -102,7 +103,7 @@ def return_floor(chainId, contract):
 				pass
 	
 	try:
-		price = database_price(collection["contract"])
+		price = database_price(collection["address"])
 		assert(type(price) == int)
 		prices.append(price)
 	except:
@@ -117,16 +118,16 @@ def return_floor(chainId, contract):
 	return final_floor
 
 
-def signature(price, deadline, chainId, contract):
+def signature(price, deadline, chainId, address):
 		
 	w3 = Web3(EthereumTesterProvider())
 
 	price = w3.toHex(w3.toBytes(price).rjust(27, b'\0'))[2:]
 	deadline = w3.toHex(w3.toBytes(deadline).rjust(32, b'\0'))[2:]
 	chainId = w3.toHex(w3.toBytes(chainId).rjust(32, b'\0'))[2:]
-	contract = contract[2:]
+	address = address[2:]
 
-	message = (price+deadline+chainId+contract)
+	message = (price+deadline+chainId+address)
 	signable_message = encode_defunct(hexstr = message)
 	key = os.getenv('KEY')
 	assert key is not None
@@ -141,11 +142,12 @@ def signature(price, deadline, chainId, contract):
 
 app = FastAPI()
 
-@app.get('/quote/{chainId}/{contract}')
-def returnValue(chainId: int, contract: str):
-	# return(chainId, contract)
+@app.get('/quote/{chainId}/{address}')
+def returnValue(chainId: int, address: str):
+	# return(chainId, address)
 
-	price = return_floor(chainId, contract)
+	address=address.lower()
+	price = return_floor(chainId, address)
 
 	if price == "500Error":
 		raise HTTPException(status_code=500, detail="Internal Server Error")
@@ -155,14 +157,14 @@ def returnValue(chainId: int, contract: str):
 	assert(type(price) == int)
 
 	try:
-		v,r,s = signature(price, deadline, chainId, contract)
+		v,r,s = signature(price, deadline, chainId, address)
 	except:
 		raise HTTPException(status_code=500, detail="Internal Server Error")
 
 	obj = {
 		"price": price,
 		"deadline": deadline,
-		"normalizedNftContract": contract,
+		"normalizedNftContract": address,
 		"signature":{
 			"v": v,
 			"r": r,
