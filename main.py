@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 import pymongo
 from pymongo.server_api import ServerApi
 from lxml import html
+from fastapi.middleware.cors import CORSMiddleware
+
 
 load_dotenv()
 data = requests.get("https://raw.githubusercontent.com/moonlend/moonlend-nft-list/master/nft-list.json").json()
@@ -19,7 +21,7 @@ def moonsama_marketplace_price(address, link):
 	query = f"""{{ 
 		latestOrders: 
 			orders( where: {{
-				active: true, buyAsset: \"0x0000000000000000000000000000000000000000-0\", sellAsset_starts_with: \"{address}\"
+				active: true, buyAsset: \"0x0000000000000000000000000000000000000000-0\", sellAsset_starts_with: \"{address.lower()}\"
 				}} 
 			orderBy: pricePerUnit orderDirection: asc skip: 0 first: 1 ) {{ 
 				id orderType createdAt active pricePerUnit 
@@ -135,6 +137,12 @@ def signature(price, deadline, chainId, address):
 
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_headers=["*"],
+)
 
 @app.get('/quote/{chainId}/{address}')
 def returnValue(chainId: int, address: str):
