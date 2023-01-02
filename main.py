@@ -15,6 +15,26 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 data = requests.get("https://raw.githubusercontent.com/moonlend/moonlend-nft-list/master/nft-list.json").json()
+w3 = Web3(EthereumTesterProvider())
+
+def signature(price, deadline, chainId, address):
+	
+	price = w3.toHex(w3.toBytes(price).rjust(27, b'\0'))[2:]
+	deadline = w3.toHex(w3.toBytes(deadline).rjust(32, b'\0'))[2:]
+	chainId = w3.toHex(w3.toBytes(chainId).rjust(32, b'\0'))[2:]
+	address = address[2:]
+
+	message = (price+deadline+chainId+address)
+	signable_message = encode_defunct(hexstr = message)
+	key = os.getenv('KEY')
+	assert key is not None
+
+	signed_message = w3.eth.account.sign_message(signable_message, private_key=key)
+	v = signed_message.v
+	r = w3.toHex(w3.toBytes(signed_message.r).rjust(32, b'\0'))
+	s = w3.toHex(w3.toBytes(signed_message.s).rjust(32, b'\0'))
+
+	return(v,r,s)
 
 def moonsama_marketplace_price(address, link):
 
@@ -66,14 +86,17 @@ def database_price(address):
 def return_floor(chainId, address):
 	print(chainId, address)
 
+	if chainId != 1285:
+		raise HTTPException(status_code=404, detail="Only Moonriver Supported")
+
 	collection = {}
 	for nft in data["tokens"]:
-		if nft["address"].lower() == address.lower() and chainId == 1285:
+		if nft["address"].lower() == address.lower():
 			collection = nft
 			break
 	
 	if not bool(collection):
-		return "500Error"
+		raise HTTPException(status_code=500, detail="Internal Server Error")
 
 	prices = []
 
@@ -113,29 +136,6 @@ def return_floor(chainId, address):
 	final_floor = min(prices)
 	return final_floor
 
-
-def signature(price, deadline, chainId, address):
-	
-	w3 = Web3(EthereumTesterProvider())
-
-	price = w3.toHex(w3.toBytes(price).rjust(27, b'\0'))[2:]
-	deadline = w3.toHex(w3.toBytes(deadline).rjust(32, b'\0'))[2:]
-	chainId = w3.toHex(w3.toBytes(chainId).rjust(32, b'\0'))[2:]
-	address = address[2:]
-
-	message = (price+deadline+chainId+address)
-	signable_message = encode_defunct(hexstr = message)
-	key = os.getenv('KEY')
-	assert key is not None
-
-	signed_message = w3.eth.account.sign_message(signable_message, private_key=key)
-	v = signed_message.v
-	r = w3.toHex(w3.toBytes(signed_message.r).rjust(32, b'\0'))
-	s = w3.toHex(w3.toBytes(signed_message.s).rjust(32, b'\0'))
-
-	return(v,r,s)
-
-
 app = FastAPI()
 
 app.add_middleware(
@@ -148,9 +148,6 @@ app.add_middleware(
 def returnValue(chainId: int, address: str):
 
 	price = return_floor(chainId, address)
-
-	if price == "500Error":
-		raise HTTPException(status_code=500, detail="Internal Server Error")
 	
 	deadline = int(time.time()) + 1200  #20 minutes in the future
 
