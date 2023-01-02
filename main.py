@@ -9,11 +9,11 @@ from eth_account.messages import encode_defunct
 from dotenv import load_dotenv
 import pymongo
 from pymongo.server_api import ServerApi
+from lxml import html
 
 load_dotenv()
 data = requests.get("https://raw.githubusercontent.com/moonlend/moonlend-nft-list/master/nft-list.json").json()
 
-# Add successful sales data and the floor one week ago data
 def moonsama_marketplace_price(address, link):
 
 	query = f"""{{ 
@@ -25,9 +25,8 @@ def moonsama_marketplace_price(address, link):
 				id orderType createdAt active pricePerUnit 
 				}}
 			}}"""
-	
-	resp = (requests.post(link, json={"query": query})).json()
-	floor = int(resp["data"]["latestOrders"][0]["pricePerUnit"])
+	resp = requests.post(link, json={"query": query}).json()
+	floor = int(float(resp["data"]["latestOrders"][0]["pricePerUnit"]) // 10e17)
 	return floor
 
 
@@ -48,22 +47,18 @@ def moonbeans_price(address, link):
 
 def raregems_price(link):
 	resp = requests.get(link)
-	soup = bs(resp.content, features="html.parser")
-	parent_element = soup.find("div", string="Min Price").parent
-	floor = int(parent_element.find("img").next_sibling.strip()) * 10**18
+	tree = html.fromstring(resp.content)
+	floor = int(float(tree.xpath("//html/body/main/div/div/div[1]/ul[2]/li[4]/div[2]/text()")[1].strip()) *10**18)
 	return floor
 
 def database_price(address):
-	PASSWORD = os.getenv('MONGODBPASSWORD')
-	client = pymongo.MongoClient(f"mongodb+srv://ninja:{PASSWORD}@oracle-atlas.2mwhyc5.mongodb.net/?retryWrites=true&w=majority", server_api=ServerApi('1'))
-	table = client["nft_collections_moonriver"][address]
-	results = table.find({"timestamp": {"$gte": int(time.time()) - 7*24*3600 }}) #fetching prices in the last week
-
-	prices = []
-	for result in results:
-		prices.append(int(result["price"]))
-	
-	return min(prices)
+	MONGODBPASSWORD = os.getenv('MONGODBPASSWORD')
+	client = pymongo.MongoClient(f"mongodb+srv://ninja:{MONGODBPASSWORD}@oracle-atlas.2mwhyc5.mongodb.net/?retryWrites=true&w=majority", server_api=ServerApi('1'))
+	table = client["nft_collections_moonriver"][address.lower()]
+	results = table.find({"timestamp": {"$gte": int(time.time()) - 7*24*3600 }}).sort("price", pymongo.ASCENDING).limit(1)  #fetching prices in the last week
+	record = results.next()
+	floor = int(record["price"] * 10e18)
+	return floor
 
 
 def return_floor(chainId, address):
@@ -71,11 +66,10 @@ def return_floor(chainId, address):
 
 	collection = {}
 	for nft in data["tokens"]:
-		if nft["address"].lower() == address and nft["chainId"] == chainId:
+		if nft["address"].lower() == address.lower() and chainId == 1285:
 			collection = nft
-		collection["address"] = collection["address"].lower()
-
-
+			break
+	
 	if not bool(collection):
 		return "500Error"
 
@@ -119,7 +113,7 @@ def return_floor(chainId, address):
 
 
 def signature(price, deadline, chainId, address):
-		
+	
 	w3 = Web3(EthereumTesterProvider())
 
 	price = w3.toHex(w3.toBytes(price).rjust(27, b'\0'))[2:]
@@ -144,9 +138,7 @@ app = FastAPI()
 
 @app.get('/quote/{chainId}/{address}')
 def returnValue(chainId: int, address: str):
-	# return(chainId, address)
 
-	address=address.lower()
 	price = return_floor(chainId, address)
 
 	if price == "500Error":
